@@ -1,8 +1,13 @@
+// @ts-check
+
 import { renderTopLanguages } from "../src/cards/top-languages.js";
-import { blacklist } from "../src/common/blacklist.js";
-import { whitelist } from "../src/common/whitelist.js";
+import { guardAccess } from "../src/common/access.js";
 import {
-  clampValue,
+  resolveCacheSeconds,
+  setCacheHeaders,
+  setErrorCacheHeaders,
+} from "../src/common/cache.js";
+import {
   CONSTANTS,
   parseArray,
   parseBoolean,
@@ -38,42 +43,36 @@ export default async (req, res) => {
   } = req.query;
   res.setHeader("Content-Type", "image/svg+xml");
 
-  if (whitelist && !whitelist.includes(username)) {
-    return res.send(
-      renderError(
-        "This username is not whitelisted",
-        "Please deploy your own instance",
-        {
-          title_color,
-          text_color,
-          bg_color,
-          border_color,
-          theme,
-          show_repo_link: false,
-        },
-      ),
-    );
-  }
-
-  if (whitelist === undefined && blacklist.includes(username)) {
-    return res.send(
-      renderError(
-        "This username is blacklisted",
-        "Please deploy your own instance",
-        {
-          title_color,
-          text_color,
-          bg_color,
-          border_color,
-          theme,
-          show_repo_link: false,
-        },
-      ),
-    );
+  const access = guardAccess({
+    res,
+    id: username,
+    type: "username",
+    colors: {
+      title_color,
+      text_color,
+      bg_color,
+      border_color,
+      theme,
+    },
+  });
+  if (!access.isPassed) {
+    return access.result;
   }
 
   if (locale && !isLocaleAvailable(locale)) {
-    return res.send(renderError("Something went wrong", "Locale not found"));
+    return res.send(
+      renderError({
+        message: "Something went wrong",
+        secondaryMessage: "Locale not found",
+        renderOptions: {
+          title_color,
+          text_color,
+          bg_color,
+          border_color,
+          theme,
+        },
+      }),
+    );
   }
 
   if (
@@ -82,7 +81,17 @@ export default async (req, res) => {
       !["compact", "normal", "donut", "donut-vertical", "pie"].includes(layout))
   ) {
     return res.send(
-      renderError("Something went wrong", "Incorrect layout input"),
+      renderError({
+        message: "Something went wrong",
+        secondaryMessage: "Incorrect layout input",
+        renderOptions: {
+          title_color,
+          text_color,
+          bg_color,
+          border_color,
+          theme,
+        },
+      }),
     );
   }
 
@@ -92,7 +101,17 @@ export default async (req, res) => {
       !["bytes", "percentages"].includes(stats_format))
   ) {
     return res.send(
-      renderError("Something went wrong", "Incorrect stats_format input"),
+      renderError({
+        message: "Something went wrong",
+        secondaryMessage: "Incorrect stats_format input",
+        renderOptions: {
+          title_color,
+          text_color,
+          bg_color,
+          border_color,
+          theme,
+        },
+      }),
     );
   }
 
@@ -103,20 +122,14 @@ export default async (req, res) => {
       size_weight,
       count_weight,
     );
+    const cacheSeconds = resolveCacheSeconds({
+      requested: parseInt(cache_seconds, 10),
+      def: CONSTANTS.TOP_LANGS_CACHE_SECONDS,
+      min: CONSTANTS.TWO_DAY,
+      max: CONSTANTS.TEN_DAY,
+    });
 
-    let cacheSeconds = clampValue(
-      parseInt(cache_seconds || CONSTANTS.TOP_LANGS_CACHE_SECONDS, 10),
-      CONSTANTS.TWO_DAY,
-      CONSTANTS.TEN_DAY,
-    );
-    cacheSeconds = process.env.CACHE_SECONDS
-      ? parseInt(process.env.CACHE_SECONDS, 10) || cacheSeconds
-      : cacheSeconds;
-
-    res.setHeader(
-      "Cache-Control",
-      `max-age=${cacheSeconds / 2}, s-maxage=${cacheSeconds}`,
-    );
+    setCacheHeaders(res, cacheSeconds);
 
     return res.send(
       renderTopLanguages(topLangs, {
@@ -140,19 +153,18 @@ export default async (req, res) => {
       }),
     );
   } catch (err) {
-    res.setHeader(
-      "Cache-Control",
-      `max-age=${CONSTANTS.ERROR_CACHE_SECONDS / 2}, s-maxage=${
-        CONSTANTS.ERROR_CACHE_SECONDS
-      }, stale-while-revalidate=${CONSTANTS.ONE_DAY}`,
-    ); // Use lower cache period for errors.
+    setErrorCacheHeaders(res);
     return res.send(
-      renderError(err.message, err.secondaryMessage, {
-        title_color,
-        text_color,
-        bg_color,
-        border_color,
-        theme,
+      renderError({
+        message: err.message,
+        secondaryMessage: err.secondaryMessage,
+        renderOptions: {
+          title_color,
+          text_color,
+          bg_color,
+          border_color,
+          theme,
+        },
       }),
     );
   }
